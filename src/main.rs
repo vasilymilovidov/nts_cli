@@ -61,6 +61,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     thread::spawn(move || loop {
         if let Event::Key(key) = event::read().unwrap() {
             ui_tx.send(UIMessage::KeyPress(key)).unwrap();
+        } else if let Event::Resize(_, _) = event::read().unwrap() {
+            ui_tx.send(UIMessage::UpdateUI).unwrap();
         }
     });
     
