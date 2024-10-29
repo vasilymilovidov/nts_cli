@@ -36,6 +36,7 @@ const HISTORY_FILE_PATH: &str = "./nts_cli_song_history.txt";
 const STREAM_URL_1: &str = "https://stream-mixtape-geo.ntslive.net/stream";
 const STREAM_URL_2: &str = "https://stream-mixtape-geo.ntslive.net/stream2";
 const DEFAULT_DURATION_SEC: u64 = 10;
+const DEFAULT_VOLUME: f32 = 1.0;
 
 //
 // MAIN
@@ -209,12 +210,14 @@ struct Radio {
     recognition_result_rx: Receiver<String>,
     ui_tx: Sender<UIMessage>,
     _stream: Option<OutputStream>,
+    volume: f32,
+    volume_display_timeout: Option<SystemTime>,
 }
 
 impl Radio {
     fn new(ui_tx: Sender<UIMessage>) -> Self {
         let streams_collection = StreamsCollection::populate_collection().unwrap();
-        let selected_stream_index = 0; // select the first NTS Live stream
+        let selected_stream_index = 0; 
         let (recognition_result_tx, recognition_result_rx) = mpsc::channel();
         Radio {
             streams_collection,
@@ -228,6 +231,8 @@ impl Radio {
             recognition_result_rx,
             ui_tx,
             _stream: None,
+            volume: DEFAULT_VOLUME,
+            volume_display_timeout: None,
         }
     }
     
@@ -264,6 +269,7 @@ impl Radio {
         thread::sleep(Duration::from_millis(200));
 
         sink.append(source);
+        sink.set_volume(self.volume);
 
         self.sink = Some(sink);
         self.current_stream_url = Some(stream_url);
@@ -435,9 +441,18 @@ impl Radio {
 
             f.render_widget(description, top_chunks[1]);
 
-            let recognition_text = self.recognition_result
+            let mut recognition_text = self.recognition_result
                 .clone()
                 .unwrap_or_else(|| "Recognizing...".to_string());
+            let current_volume = self.volume;
+            let volume_percentage = (current_volume as f32 * 100.0).round();
+            if let Some(timeout) = self.volume_display_timeout {
+                 if timeout.elapsed().unwrap() < Duration::from_secs(2) {
+                     recognition_text = format!("{}\nVolume: {}%", recognition_text, volume_percentage);
+                 } else {
+                     self.volume_display_timeout = None;
+                 }
+             }
             let duration_text = format!("{} seconds \nResult: {}", self.duration, recognition_text);
             let recognition = Paragraph::new(duration_text)
                 .block(create_block("Track Recognition")).style(Style::default().fg(Color::Blue))
@@ -490,6 +505,24 @@ impl Radio {
                     self.duration -= 1;
                 }
             }
+            KeyCode::Char('<') => {
+                      if self.volume > 0.0 {
+                          self.volume -= 0.1;
+                          if let Some(sink) = &self.sink {
+                              sink.set_volume(self.volume);
+                              self.volume_display_timeout = Some(SystemTime::now());
+                          }
+                      }
+                  }
+                  KeyCode::Char('>') => {
+                      if self.volume < 1.0 {
+                          self.volume += 0.1;
+                          if let Some(sink) = &self.sink {
+                              sink.set_volume(self.volume);
+                              self.volume_display_timeout = Some(SystemTime::now());
+                          }
+                      }
+                  }
             _ => {}
         }
         Ok(())
