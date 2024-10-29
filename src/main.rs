@@ -5,11 +5,14 @@
 // DEPENDENCIES
 //
 
+mod mp3_decoder;
+
 use crossterm::{
     event::{self, Event, KeyCode, KeyEvent},
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
+use mp3_decoder::Mp3StreamDecoder;
 use ratatui::{
     backend::CrosstermBackend,
     layout::{Constraint, Direction, Layout},
@@ -18,16 +21,10 @@ use ratatui::{
     widgets::{Block, Borders, List, ListItem, Paragraph, Wrap},
     Terminal,
 };
+use rodio::{OutputStream, Sink};
 use serde_json::Value;
 use std::{
-    env,
-    fs::OpenOptions,
-    io::{self, Read, Write},
-    net::TcpStream,
-    path::PathBuf,
-    process::{Child, Command},
-    sync::mpsc::{self, Receiver, Sender},
-    thread, time::{Duration, SystemTime, UNIX_EPOCH},
+    env, fs::OpenOptions, io::{self, BufReader, Read, Write}, net::TcpStream, path::PathBuf, process::{Child, Command}, sync::mpsc::{self, Receiver, Sender}, thread, time::{Duration, SystemTime, UNIX_EPOCH}
 };
 use tempfile::tempdir;
 
@@ -204,12 +201,14 @@ struct Radio {
     streams_collection: StreamsCollection,
     selected_stream_index: usize,
     playing_process: Option<Child>,
+    sink: Option<Sink>,
     current_stream_url: Option<String>,
     recognition_result: Option<String>,
     duration: u64,
     recognition_result_tx: Sender<String>,
     recognition_result_rx: Receiver<String>,
     ui_tx: Sender<UIMessage>,
+    _stream: Option<OutputStream>,
 }
 
 impl Radio {
@@ -221,12 +220,14 @@ impl Radio {
             streams_collection,
             selected_stream_index,
             playing_process: None,
+            sink: None,
             current_stream_url: None,
             recognition_result: Some("No song recognized".to_string()),
             duration: DEFAULT_DURATION_SEC,
             recognition_result_tx,
             recognition_result_rx,
             ui_tx,
+            _stream: None,
         }
     }
     
@@ -240,6 +241,7 @@ impl Radio {
         }
     }
 
+
     fn play(&mut self, stream_type: StreamType) {
         let selected_stream = match stream_type {
             StreamType::Mixtape => {
@@ -252,16 +254,20 @@ impl Radio {
 
         let stream_url = selected_stream.audio_stream_endpoint.clone();
         self.stop_playing_process();
-        let devnull = std::fs::File::open("/dev/null").unwrap();
-        let child = Command::new("ffplay")
-            .args(["-i", &stream_url, "-nodisp"])
-            .stdout(devnull.try_clone().unwrap())
-            .stderr(devnull)
-            .spawn()
-            .unwrap();
 
-        self.playing_process = Some(child);
+        let (_stream, stream_handle) = OutputStream::try_default().unwrap();
+        let sink = Sink::try_new(&stream_handle).unwrap();
+
+        let response = reqwest::blocking::get(&stream_url).unwrap();
+        let source = Mp3StreamDecoder::new(BufReader::new(response), 8096).unwrap();
+
+        thread::sleep(Duration::from_millis(200));
+
+        sink.append(source);
+
+        self.sink = Some(sink);
         self.current_stream_url = Some(stream_url);
+        self._stream = Some(_stream);
     }
 
     fn stop(&mut self) {
