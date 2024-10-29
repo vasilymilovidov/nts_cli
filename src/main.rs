@@ -21,11 +21,20 @@ use ratatui::{
     widgets::{Block, Borders, List, ListItem, Paragraph, Wrap},
     Terminal,
 };
+use reqwest::blocking::Client;
 use rodio::{OutputStream, Sink};
 use serde_json::Value;
 use std::{
-    env, fs::OpenOptions, io::{self, BufReader, Read, Write}, net::TcpStream, path::PathBuf, process::{Child, Command}, sync::mpsc::{self, Receiver, Sender}, thread, time::{Duration, SystemTime, UNIX_EPOCH}
+    env,
+    fs::OpenOptions,
+    io::{self, BufReader},
+    path::PathBuf,
+    process::{Child, Command},
+    sync::mpsc::{self, Receiver, Sender},
+    thread,
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
+use std::io::Write;
 use tempfile::tempdir;
 
 //
@@ -63,12 +72,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             ui_tx.send(UIMessage::UpdateUI).unwrap();
         }
     });
-    
-     thread::spawn(move || loop {
-         let duration = duration_until_next_hour();
-         thread::sleep(duration);
-         ui_tx_clone.send(UIMessage::UpdateStreamsCollection).unwrap();
-     });
+
+    thread::spawn(move || loop {
+        let duration = duration_until_next_hour();
+        thread::sleep(duration);
+        ui_tx_clone
+            .send(UIMessage::UpdateStreamsCollection)
+            .unwrap();
+    });
 
     loop {
         match ui_rx.recv()? {
@@ -117,28 +128,30 @@ struct StreamsCollection {
 
 impl StreamsCollection {
     fn populate_collection() -> Result<StreamsCollection, Box<dyn std::error::Error>> {
-        let mixtapes = Self::fetch_streams("www.nts.live", "/api/v2/mixtapes", |item| Stream {
-            title: item["title"].as_str().unwrap_or_default().to_string(),
-            subtitle: item["subtitle"].as_str().unwrap_or_default().to_string(),
-            description: item["description"].as_str().unwrap_or_default().to_string(),
-            audio_stream_endpoint: item["audio_stream_endpoint"]
-                .as_str()
-                .unwrap_or_default()
-                .to_string(),
-        })?;
+        let mixtapes =
+            Self::fetch_streams("https://www.nts.live/api/v2/mixtapes", |item| Stream {
+                title: item["title"].as_str().unwrap_or_default().to_string(),
+                subtitle: item["subtitle"].as_str().unwrap_or_default().to_string(),
+                description: item["description"].as_str().unwrap_or_default().to_string(),
+                audio_stream_endpoint: item["audio_stream_endpoint"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_string(),
+            })?;
 
-        let mut stations = Self::fetch_streams("www.nts.live", "/api/v2/live", |item| Stream {
-            title: "NTS Live 1".to_string(),
-            subtitle: item["now"]["broadcast_title"]
-                .as_str()
-                .unwrap_or_default()
-                .to_string(),
-            description: item["now"]["embeds"]["details"]["description"]
-                .as_str()
-                .unwrap_or_default()
-                .to_string(),
-            audio_stream_endpoint: STREAM_URL_1.to_string(),
-        })?;
+        let mut stations =
+            Self::fetch_streams("https://www.nts.live/api/v2/live", |item| Stream {
+                title: "NTS Live 1".to_string(),
+                subtitle: item["now"]["broadcast_title"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_string(),
+                description: item["now"]["embeds"]["details"]["description"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_string(),
+                audio_stream_endpoint: STREAM_URL_1.to_string(),
+            })?;
 
         if let Some(second_station) = stations.get_mut(1) {
             second_station.title = "NTS Live 2".to_string();
@@ -148,36 +161,14 @@ impl StreamsCollection {
         Ok(StreamsCollection { mixtapes, stations })
     }
 
-    fn fetch_streams<F>(
-        host: &str,
-        path: &str,
-        parse_item: F,
-    ) -> Result<Vec<Stream>, Box<dyn std::error::Error>>
+    fn fetch_streams<F>(url: &str, parse_item: F) -> Result<Vec<Stream>, Box<dyn std::error::Error>>
     where
         F: Fn(&Value) -> Stream,
     {
-        let stream = TcpStream::connect((host, 443))?;
-        let connector = native_tls::TlsConnector::new()?;
-        let mut stream = connector.connect(host, stream)?;
+        let client = Client::new();
+        let response = client.get(url).send()?.text()?;
 
-        let request = format!(
-            "GET {} HTTP/1.1\r\n\
-             Host: {}\r\n\
-             Connection: close\r\n\
-             \r\n",
-            path, host
-        );
-
-        stream.write_all(request.as_bytes())?;
-
-        let mut response = String::new();
-        stream.read_to_string(&mut response)?;
-
-        let body = response
-            .split("\r\n\r\n")
-            .nth(1)
-            .ok_or("Invalid response")?;
-        let json: Value = serde_json::from_str(body)?;
+        let json: Value = serde_json::from_str(&response)?;
         let collection: Vec<Stream> = json["results"]
             .as_array()
             .unwrap_or(&Vec::new())
@@ -217,7 +208,7 @@ struct Radio {
 impl Radio {
     fn new(ui_tx: Sender<UIMessage>) -> Self {
         let streams_collection = StreamsCollection::populate_collection().unwrap();
-        let selected_stream_index = 0; 
+        let selected_stream_index = 0;
         let (recognition_result_tx, recognition_result_rx) = mpsc::channel();
         Radio {
             streams_collection,
@@ -235,7 +226,7 @@ impl Radio {
             volume_display_timeout: None,
         }
     }
-    
+
     fn update_collection(&mut self) {
         self.streams_collection = StreamsCollection::populate_collection().unwrap();
     }
@@ -245,7 +236,6 @@ impl Radio {
             let _ = child.kill();
         }
     }
-
 
     fn play(&mut self, stream_type: StreamType) {
         let selected_stream = match stream_type {
@@ -506,23 +496,23 @@ impl Radio {
                 }
             }
             KeyCode::Char('<') => {
-                      if self.volume > 0.0 {
-                          self.volume -= 0.1;
-                          if let Some(sink) = &self.sink {
-                              sink.set_volume(self.volume);
-                              self.volume_display_timeout = Some(SystemTime::now());
-                          }
-                      }
-                  }
-                  KeyCode::Char('>') => {
-                      if self.volume < 1.0 {
-                          self.volume += 0.1;
-                          if let Some(sink) = &self.sink {
-                              sink.set_volume(self.volume);
-                              self.volume_display_timeout = Some(SystemTime::now());
-                          }
-                      }
-                  }
+                if self.volume > 0.0 {
+                    self.volume -= 0.1;
+                    if let Some(sink) = &self.sink {
+                        sink.set_volume(self.volume);
+                        self.volume_display_timeout = Some(SystemTime::now());
+                    }
+                }
+            }
+            KeyCode::Char('>') => {
+                if self.volume < 1.0 {
+                    self.volume += 0.1;
+                    if let Some(sink) = &self.sink {
+                        sink.set_volume(self.volume);
+                        self.volume_display_timeout = Some(SystemTime::now());
+                    }
+                }
+            }
             _ => {}
         }
         Ok(())
