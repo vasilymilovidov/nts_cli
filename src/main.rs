@@ -27,7 +27,7 @@ use serde_json::Value;
 use std::{
     env,
     fs::OpenOptions,
-    io::{self, BufReader},
+    io::{self, BufReader, Read},
     path::PathBuf,
     process::{Child, Command},
     sync::mpsc::{self, Receiver, Sender},
@@ -44,7 +44,7 @@ use tempfile::tempdir;
 const HISTORY_FILE_PATH: &str = "./nts_cli_song_history.txt";
 const STREAM_URL_1: &str = "https://stream-mixtape-geo.ntslive.net/stream";
 const STREAM_URL_2: &str = "https://stream-mixtape-geo.ntslive.net/stream2";
-const DEFAULT_DURATION_SEC: u64 = 10;
+const DEFAULT_DURATION_SEC: u64 = 5;
 const DEFAULT_VOLUME: f32 = 1.0;
 
 //
@@ -277,57 +277,63 @@ impl Radio {
         let duration = self.duration;
         let recognition_result_tx = self.recognition_result_tx.clone();
         let ui_tx = self.ui_tx.clone();
-
+    
         thread::spawn(move || {
             let dir = tempdir().unwrap();
             let temp_file_path = dir.path().join("sample.mp3");
-
-            if Command::new("ffmpeg")
-                .args([
-                    "-i",
-                    stream_url.as_ref().unwrap(),
-                    "-t",
-                    &duration.to_string(),
-                    "-acodec",
-                    "copy",
-                    temp_file_path.to_str().unwrap(),
-                ])
+    
+            // Create a temporary file to save the audio stream
+            let mut temp_file = std::fs::File::create(&temp_file_path).unwrap();
+    
+            // Stream the audio and save it to the temporary file
+            let response = reqwest::blocking::get(&stream_url.unwrap()).unwrap();
+            let mut reader = BufReader::new(response);
+    
+            let mut buffer = [0; 4096];
+            let mut total_bytes_written = 0;
+            let max_bytes = duration as usize * 128 * 1024; // Approximate bytes for the given duration
+    
+            while let Ok(bytes_read) = reader.read(&mut buffer) {
+                if bytes_read == 0 {
+                    break;
+                }
+                temp_file.write_all(&buffer[..bytes_read]).unwrap();
+                total_bytes_written += bytes_read;
+                if total_bytes_written >= max_bytes {
+                    break;
+                }
+            }
+    
+            // Use the saved audio file for recognition
+            if let Ok(vibra_output) = Command::new("vibra")
+                .args(["-R", "--file", temp_file_path.to_str().unwrap()])
                 .output()
-                .unwrap()
-                .status
-                .success()
             {
-                if let Ok(vibra_output) = Command::new("vibra")
-                    .args(["-R", "--file", temp_file_path.to_str().unwrap()])
-                    .output()
-                {
-                    if vibra_output.status.success() {
-                        let recognition_json = String::from_utf8_lossy(&vibra_output.stdout);
-                        let recognition_value: Value =
-                            serde_json::from_str(&recognition_json).unwrap();
-
-                        let recognition_text = recognition_value
-                            .get("track")
-                            .map(|track| {
-                                let title = track
-                                    .get("title")
-                                    .and_then(Value::as_str)
-                                    .unwrap_or("Unknown Title");
-                                let subtitle = track
-                                    .get("subtitle")
-                                    .and_then(Value::as_str)
-                                    .unwrap_or("Unknown Artist");
-                                format!("{} - {}", title, subtitle)
-                            })
-                            .unwrap_or_else(|| "No song recognized".to_string());
-
-                        if recognition_text != "No song recognized" {
-                            append_to_recognition_history(&recognition_text).unwrap();
-                        }
-
-                        recognition_result_tx.send(recognition_text).unwrap();
-                        ui_tx.send(UIMessage::RecognitionResult).unwrap();
+                if vibra_output.status.success() {
+                    let recognition_json = String::from_utf8_lossy(&vibra_output.stdout);
+                    let recognition_value: Value = serde_json::from_str(&recognition_json).unwrap();
+    
+                    let recognition_text = recognition_value
+                        .get("track")
+                        .map(|track| {
+                            let title = track
+                                .get("title")
+                                .and_then(Value::as_str)
+                                .unwrap_or("Unknown Title");
+                            let subtitle = track
+                                .get("subtitle")
+                                .and_then(Value::as_str)
+                                .unwrap_or("Unknown Artist");
+                            format!("{} - {}", title, subtitle)
+                        })
+                        .unwrap_or_else(|| "No song recognized".to_string());
+    
+                    if recognition_text != "No song recognized" {
+                        append_to_recognition_history(&recognition_text).unwrap();
                     }
+    
+                    recognition_result_tx.send(recognition_text).unwrap();
+                    ui_tx.send(UIMessage::RecognitionResult).unwrap();
                 }
             }
         });
@@ -449,7 +455,7 @@ impl Radio {
                 .wrap(Wrap { trim: true });
             f.render_widget(recognition, bottom_chunks[0]);
 
-            let controls_text = format!("j/k: Move up/down | Enter: Play | s: Stop | r: Recognise | +/-: Change duration | q: Quit");
+            let controls_text = format!("j/k: Move up/down | Enter: Play | s: Stop | </>: Volume | r: Recognise | +/-: Change duration | q: Quit");
             let controls = Paragraph::new(controls_text).block(create_block("Controls")).style(Style::default().fg(Color::DarkGray)).wrap(Wrap { trim: true });
             f.render_widget(controls, bottom_chunks[1]);
         })?;
