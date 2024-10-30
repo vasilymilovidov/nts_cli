@@ -24,6 +24,7 @@ use ratatui::{
 use reqwest::blocking::Client;
 use rodio::{OutputStream, Sink};
 use serde_json::Value;
+use std::io::Write;
 use std::{
     env,
     fs::OpenOptions,
@@ -34,7 +35,6 @@ use std::{
     thread,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
-use std::io::Write;
 use tempfile::tempdir;
 
 //
@@ -277,36 +277,46 @@ impl Radio {
         let duration = self.duration;
         let recognition_result_tx = self.recognition_result_tx.clone();
         let ui_tx = self.ui_tx.clone();
-    
+
         thread::spawn(move || {
             let dir = tempdir().unwrap();
             let temp_file_path = dir.path().join("sample.mp3");
-            
-            if let Ok(response) = reqwest::blocking::get(&stream_url.unwrap()) {
+
+            if let Ok(response) = reqwest::blocking::get(stream_url.unwrap()) {
                 let mut temp_file = std::fs::File::create(&temp_file_path).unwrap();
                 let max_bytes = duration as usize * 128 * 1024;
-                
+
                 io::copy(&mut response.take(max_bytes as u64), &mut temp_file).unwrap();
-    
+
                 if let Ok(output) = Command::new("vibra")
                     .args(["-R", "--file", temp_file_path.to_str().unwrap()])
                     .output()
                 {
                     if output.status.success() {
-                        let json: Value = serde_json::from_str(&String::from_utf8_lossy(&output.stdout)).unwrap();
-                        
-                        let recognition_text = json.get("track")
-                            .map(|track| format!(
-                                "{} - {}",
-                                track.get("title").and_then(Value::as_str).unwrap_or("Unknown Title"),
-                                track.get("subtitle").and_then(Value::as_str).unwrap_or("Unknown Artist")
-                            ))
+                        let json: Value =
+                            serde_json::from_str(&String::from_utf8_lossy(&output.stdout)).unwrap();
+
+                        let recognition_text = json
+                            .get("track")
+                            .map(|track| {
+                                format!(
+                                    "{} - {}",
+                                    track
+                                        .get("title")
+                                        .and_then(Value::as_str)
+                                        .unwrap_or("Unknown Title"),
+                                    track
+                                        .get("subtitle")
+                                        .and_then(Value::as_str)
+                                        .unwrap_or("Unknown Artist")
+                                )
+                            })
                             .unwrap_or_else(|| "No song recognized".to_string());
-    
+
                         if recognition_text != "No song recognized" {
                             let _ = append_to_recognition_history(&recognition_text);
                         }
-    
+
                         let _ = recognition_result_tx.send(recognition_text);
                         let _ = ui_tx.send(UIMessage::RecognitionResult);
                     }
@@ -417,7 +427,7 @@ impl Radio {
                 .clone()
                 .unwrap_or_else(|| "Recognizing...".to_string());
             let current_volume = self.volume;
-            let volume_percentage = (current_volume as f32 * 100.0).round();
+            let volume_percentage = (current_volume * 100.0).round();
             if let Some(timeout) = self.volume_display_timeout {
                  if timeout.elapsed().unwrap() < Duration::from_secs(2) {
                      recognition_text = format!("{}\nVolume: {}%", recognition_text, volume_percentage);
@@ -431,7 +441,7 @@ impl Radio {
                 .wrap(Wrap { trim: true });
             f.render_widget(recognition, bottom_chunks[0]);
 
-            let controls_text = format!("j/k: Move up/down | Enter: Play | s: Stop | </>: Volume | r: Recognise | +/-: Change duration | q: Quit");
+            let controls_text = "j/k: Move up/down | Enter: Play | s: Stop | </>: Volume | r: Recognise | +/-: Change duration | q: Quit".to_string();
             let controls = Paragraph::new(controls_text).block(create_block("Controls")).style(Style::default().fg(Color::DarkGray)).wrap(Wrap { trim: true });
             f.render_widget(controls, bottom_chunks[1]);
         })?;
@@ -465,7 +475,7 @@ impl Radio {
             }
             KeyCode::Char('s') => self.stop(),
             KeyCode::Char('r') => {
-                if let Some(_) = &self.current_stream_url {
+                if self.current_stream_url.is_some() {
                     self.start_recognition();
                 }
             }
