@@ -8,12 +8,14 @@ serde_json = "1.0"
 tempfile = "3.13.0"
 crossterm = "0.28.1"
 ratatui = "0.29.0"
-rodio = {version = "0.19.0", default-features = true}
-reqwest = {version = "*", features = ["blocking", "json"]}
-minimp3 = {version = "0.5.1", default-features = false}
+rodio = "0.19.0"
+reqwest = { version = "0.12.9", features = ["blocking", "json"] }
+minimp3 = { version = "0.5.1", default-features = false }
 
 [profile.release]
 opt-level = 's'
 lto = true
 codegen-units = 1
+strip = true
 panic = 'abort'
+

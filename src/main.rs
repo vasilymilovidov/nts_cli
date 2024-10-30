@@ -163,7 +163,7 @@ impl StreamsCollection {
         Ok(StreamsCollection { mixtapes, stations })
     }
 
-    fn fetch_streams<F>(url: &str, parse_item: F) -> Result<Vec<Stream>, Box<dyn std::error::Error>>
+   fn fetch_streams<F>(url: &str, parse_item: F) -> Result<Vec<Stream>, Box<dyn std::error::Error>>
     where
         F: Fn(&Value) -> Stream,
     {
@@ -245,7 +245,7 @@ impl Radio {
             recognition_result_display_timeout: None,
             recognition_list: buf,
             vertical_scroll_state: ScrollbarState::default(),
-            vertical_scroll: history_len,
+            vertical_scroll: history_len.saturating_sub(5),
         }
     }
 
@@ -314,7 +314,7 @@ impl Radio {
                     .args(["-R", "--file", temp_file_path.to_str().unwrap()])
                     .output()
                 {
-                    if output.status.success() {
+               if output.status.success() {
                         let json: Value =
                             serde_json::from_str(&String::from_utf8_lossy(&output.stdout)).unwrap();
 
@@ -367,6 +367,7 @@ impl Radio {
                 .open(history_file_path)
                 .unwrap()
                 .read_to_string(&mut buf);
+            self.vertical_scroll_state = self.vertical_scroll_state.content_length(buf.lines().count());
             self.recognition_list = buf;
             self.recognition_result_display_timeout = Some(SystemTime::now());
             self.start_recognition_info_timer();
@@ -383,8 +384,8 @@ impl Radio {
                 .margin(1)
                 .constraints(
                     [
+                        Constraint::Percentage(10),
                         Constraint::Fill(1),
-                        Constraint::Fill(3),
                         Constraint::Fill(1),
                     ]
                     .as_ref(),
@@ -398,7 +399,7 @@ impl Radio {
     
             let bottom_chunks = Layout::default()
                 .direction(Direction::Vertical)
-                .constraints([Constraint::Fill(1), Constraint::Fill(1), Constraint::Fill(1)].as_ref())
+                .constraints([Constraint::Percentage(50), Constraint::Percentage(10), Constraint::Fill(20)].as_ref())
                 .split(main_chunks[2]);
     
             let create_list_item = |title: &str, is_selected: bool| {
