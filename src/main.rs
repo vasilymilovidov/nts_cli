@@ -33,7 +33,7 @@ use std::{
     fs::OpenOptions,
     io::{self, BufReader, Read},
     path::PathBuf,
-    process::{Child, Command},
+    process::Command,
     sync::mpsc::{self, Receiver, Sender},
     thread,
     time::{Duration, SystemTime, UNIX_EPOCH},
@@ -194,7 +194,6 @@ enum UIMessage {
 struct Radio {
     streams_collection: StreamsCollection,
     selected_stream_index: usize,
-    playing_process: Option<Child>,
     sink: Option<Sink>,
     current_stream_url: Option<String>,
     recognition_result: Option<String>,
@@ -230,7 +229,6 @@ impl Radio {
         Radio {
             streams_collection,
             selected_stream_index,
-            playing_process: None,
             sink: None,
             current_stream_url: None,
             recognition_result: Some("No song recognized".to_string()),
@@ -253,10 +251,12 @@ impl Radio {
         self.streams_collection = StreamsCollection::populate_collection().unwrap();
     }
 
-    fn stop_playing_process(&mut self) {
-        if let Some(mut child) = self.playing_process.take() {
-            let _ = child.kill();
-        }
+    fn stop(&mut self) {
+        if let Some(sink) = self.sink.take() {
+                sink.stop();
+            }
+            self.current_stream_url = None;
+            self._stream = None;
     }
 
     fn play(&mut self, stream_type: StreamType) {
@@ -270,7 +270,7 @@ impl Radio {
         };
 
         let stream_url = selected_stream.audio_stream_endpoint.clone();
-        self.stop_playing_process();
+        self.stop();
 
         let (_stream, stream_handle) = OutputStream::try_default().unwrap();
         let sink = Sink::try_new(&stream_handle).unwrap();
@@ -286,11 +286,6 @@ impl Radio {
         self.sink = Some(sink);
         self.current_stream_url = Some(stream_url);
         self._stream = Some(_stream);
-    }
-
-    fn stop(&mut self) {
-        self.stop_playing_process();
-        self.current_stream_url = None;
     }
 
     fn start_recognition(&mut self) {
@@ -503,7 +498,7 @@ impl Radio {
             f.render_widget(recognition_info_paragraph, bottom_chunks[1]);
     
             // Render controls
-            let controls = "j/k: Scroll Recognized Tracks | Enter: Play | s: Stop | </>: Volume | r: Recognise | =/-: Change duration | q: Quit".to_string();
+            let controls = "j/k: Scroll Recognized Tracks | Enter: Play | Space: Stop | </>: Volume | r: Recognise | =/-: Change duration | q: Quit".to_string();
             let mut controls_text = controls.clone();
             let current_volume = self.volume;
             let volume_percentage = (current_volume * 100.0).round();
@@ -530,7 +525,7 @@ impl Radio {
     fn handle_key_press(&mut self, key: KeyEvent) -> Result<(), Box<dyn std::error::Error>> {
         match key.code {
             KeyCode::Char('q') => {
-                self.stop_playing_process();
+                self.stop();
                 disable_raw_mode()?;
                 execute!(io::stdout(), LeaveAlternateScreen)?;
                 std::process::exit(0);
@@ -554,7 +549,7 @@ impl Radio {
                 self.recognition_result_display_timeout = Some(SystemTime::now());
                 self.start_recognition_info_timer();
             }
-            KeyCode::Char('s') => self.stop(),
+            KeyCode::Char(' ') => self.stop(),
             KeyCode::Char('r') => {
                 if self.current_stream_url.is_some() {
                     self.start_recognition();
