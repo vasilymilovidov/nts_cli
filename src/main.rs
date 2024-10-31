@@ -495,7 +495,6 @@ impl Radio {
                     recognition_info_text = recognition_result_text.to_string();
                 } else {
                     self.recognition_result_display_timeout = None;
-                    recognition_info_text = String::new();
                 }
             }
             let recognition_info_paragraph = Paragraph::new(recognition_info_text)
