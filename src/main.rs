@@ -403,7 +403,11 @@ impl Radio {
                 } else {
                     Style::default().fg(Color::Red)
                 };
-                ListItem::new(vec![Line::from(Span::styled(title.to_string(), style))])
+                if is_selected {
+                    ListItem::new(vec![Line::from(Span::styled(title.to_string() + " •", style))])
+                } else {
+                    ListItem::new(vec![Line::from(Span::styled(title.to_string(), style))])
+                }
             };
     
             // Create list items for mixtapes and stations
