@@ -48,7 +48,7 @@ const HISTORY_FILE_PATH: &str = "./nts_cli_song_history.txt";
 const STREAM_URL_1: &str = "https://stream-mixtape-geo.ntslive.net/stream";
 const STREAM_URL_2: &str = "https://stream-mixtape-geo.ntslive.net/stream2";
 const DEFAULT_DURATION_SEC: u64 = 5;
-const DEFAULT_VOLUME: f32 = 1.0;
+const DEFAULT_VOLUME: f32 = 0.5;
 const RECOGNITION_INFO_TIMER: u64 = 12;
 const DURATION_INFO_TIMER: u64 = 1;
 const VOLUME_INFO_TIMER: u64 = 2;
@@ -281,7 +281,7 @@ impl Radio {
         thread::sleep(Duration::from_millis(500));
 
         sink.append(source);
-        sink.set_volume(self.volume);
+        sink.set_volume(self.volume * 0.5);
 
         self.sink = Some(sink);
         self.current_stream_url = Some(stream_url);
@@ -572,10 +572,10 @@ impl Radio {
                 }
             }
             KeyCode::Char('<') => {
-                if self.volume > 0.0 {
+                if (self.volume * 0.5) > 0.05 {
                     self.volume -= 0.1;
                     if let Some(sink) = &self.sink {
-                        sink.set_volume(self.volume);
+                        sink.set_volume(self.volume * 0.5);
                         self.volume_display_timeout = Some(SystemTime::now());
                     }
                 }
@@ -584,7 +584,7 @@ impl Radio {
                 if self.volume < 1.0 {
                     self.volume += 0.1;
                     if let Some(sink) = &self.sink {
-                        sink.set_volume(self.volume);
+                        sink.set_volume(self.volume * 0.5);
                         self.volume_display_timeout = Some(SystemTime::now());
                     }
                 }
